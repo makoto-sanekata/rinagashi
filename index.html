@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>李流し — Rinagashi</title>
+<style>
+  :root {
+    --paper: #f3eee3;
+    --ink-text: #3c372f;
+    --ink-sub: #8d8478;
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); }
+  body { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; }
+
+  #paper, #ink {
+    position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
+  }
+  #ink { mix-blend-mode: multiply; touch-action: none; cursor: crosshair; }
+
+  /* ===== タイトル ===== */
+  header {
+    position: fixed; top: 26px; left: 26px; z-index: 5;
+    display: flex; gap: 18px; pointer-events: none;
+    -webkit-writing-mode: vertical-rl; writing-mode: vertical-rl;
+  }
+  h1 {
+    margin: 0; font-size: 34px; font-weight: 500; color: var(--ink-text);
+    letter-spacing: 14px;
+  }
+  .subtitle {
+    margin-top: 10px; font-size: 10px; color: var(--ink-sub);
+    letter-spacing: 5px; text-transform: uppercase;
+  }
+
+  /* ===== ツールバー ===== */
+  #toolbar {
+    position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+    z-index: 10; display: flex; align-items: center; gap: 16px;
+    padding: 11px 24px; border-radius: 999px;
+    background: rgba(250, 247, 240, 0.78);
+    border: 1px solid rgba(70, 60, 45, 0.14);
+    box-shadow: 0 8px 28px rgba(70, 60, 45, 0.10);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .sw {
+    position: relative; width: 22px; height: 22px; border-radius: 50%;
+    border: none; padding: 0; cursor: pointer; flex: none;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
+    transition: transform .15s ease;
+  }
+  .sw:hover { transform: scale(1.12); }
+  .sw.active {
+    box-shadow: 0 0 0 2.5px var(--paper), 0 0 0 4px rgba(110, 100, 85, 0.65);
+  }
+  .sw.active::after {
+    content: attr(data-name);
+    position: absolute; top: -27px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; letter-spacing: 3px; color: var(--ink-sub);
+    font-family: inherit; white-space: nowrap;
+  }
+  .divider { width: 1px; height: 20px; background: rgba(70, 60, 45, 0.18); }
+  .tbtn {
+    border: none; background: none; padding: 4px 2px; cursor: pointer;
+    font-family: inherit; font-size: 13px; letter-spacing: 4px;
+    color: var(--ink-text); display: flex; align-items: center; gap: 8px;
+    white-space: nowrap; touch-action: manipulation;
+  }
+  .tbtn:hover { color: #000; }
+  #autoBtn .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    border: 1.5px solid #2e4e86; background: transparent;
+    transition: background .2s ease;
+  }
+  #autoBtn.on .dot { background: #2e4e86; }
+
+  /* ===== モバイル ===== */
+  @media (max-width: 480px) {
+    header { top: 18px; left: 16px; gap: 12px; }
+    h1 { font-size: 22px; letter-spacing: 9px; }
+    .subtitle { font-size: 8px; letter-spacing: 3px; }
+    #toolbar {
+      gap: 10px; padding: 9px 14px;
+      bottom: calc(14px + env(safe-area-inset-bottom));
+      max-width: calc(100vw - 24px); box-sizing: border-box;
+    }
+    #swatches { gap: 10px !important; }
+    .sw { width: 20px; height: 20px; }
+    .tbtn { font-size: 12px; letter-spacing: 1px; gap: 5px; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="paper"></canvas>
+<canvas id="ink"></canvas>
+
+<header>
+  <h1>李流し</h1>
+  <div class="subtitle">Rinagashi — Ink Dissolution</div>
+</header>
+
+<div id="toolbar">
+  <!-- 色見本はJSで生成 -->
+  <div id="swatches" style="display:flex; align-items:center; gap:13px;"></div>
+  <div class="divider"></div>
+  <button id="autoBtn" class="tbtn on"><span class="dot"></span>自動演出</button>
+  <button id="washBtn" class="tbtn">洗い流す</button>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+// ===== 調整用定数 =====
+const INK_SCALE = 0.6;              // 内部解像度（CSS pxに対する比率）
+const MAX_PARTICLES = 2600;
+const FADE_INTERVAL_FRAMES = 60;    // 退色を適用する間隔
+const FADE_ALPHA = 0.02;            // 1回の退色量（〜2.5分で消える）
+const BLUR_INTERVAL_FRAMES = 4;     // 滲み拡散の間隔
+const BLUR_RADIUS_PX = 0.8;
+const FLOW_STRENGTH = 5200;         // 流れ場の強さ
+const FLOW_TIME_SCALE = 0.03;       // 流れ場の時間変化速度
+const FLOW_NOISE_SCALE = 0.0045;    // 流れ場の空間スケール
+const WASH_DURATION_S = 1.3;        // 「洗い流す」の所要時間
+const AUTO_WAIT_MIN_S = 4;
+const AUTO_WAIT_MAX_S = 9;
+const DROP_SPACING_PX = 4;          // ストローク中に滴を落とす間隔
+const KANJI_CHAR = '李';            // 操作のたびに書かれる文字
+const KANJI_SAMPLE_STEP = 4;        // グリフを点群化する間引き幅
+
+const PALETTE = [
+  { name: '朱墨', cols: ['#a8403a', '#262430'] },
+  { name: '墨',   cols: ['#2a2833'] },
+  { name: '藍',   cols: ['#2e4e86'] },
+  { name: '朱',   cols: ['#bc4540'] },
+  { name: '緑',   cols: ['#41785c'] },
+];
+
+// ===== 要素 =====
+const inkCanvas = document.getElementById('ink');
+const paperCanvas = document.getElementById('paper');
+const ctx = inkCanvas.getContext('2d');
+
+// ===== 状態 =====
+let selectedIndex = 3;   // 初期は「朱」
+let isAutoOn = true;
+let particles = [];
+let strokes = [];
+let washEndAt = -1;
+let frameCount = 0;
+let lastTs = 0;
+let elapsedSec = 0;
+let autoNextAt = 0.8;
+
+// ===== ノイズ（値ノイズ + カール場） =====
+function hash2(ix, iy) {
+  const n = Math.sin(ix * 127.1 + iy * 311.7) * 43758.5453;
+  return n - Math.floor(n);
+}
+function smoothstep01(t) { return t * t * (3 - 2 * t); }
+function noise2(x, y) {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  const fx = x - ix, fy = y - iy;
+  const a = hash2(ix, iy), b = hash2(ix + 1, iy);
+  const c = hash2(ix, iy + 1), d = hash2(ix + 1, iy + 1);
+  const u = smoothstep01(fx), v = smoothstep01(fy);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+// 発散ゼロのカールノイズ：インクが「流れている」ように見せる
+function flowAt(x, y, t) {
+  const s = FLOW_NOISE_SCALE, e = 1.2;
+  const nx1 = noise2((x + e) * s, y * s + t);
+  const nx0 = noise2((x - e) * s, y * s + t);
+  const ny1 = noise2(x * s, (y + e) * s + t);
+  const ny0 = noise2(x * s, (y - e) * s + t);
+  return { vx: (ny1 - ny0) * FLOW_STRENGTH, vy: -(nx1 - nx0) * FLOW_STRENGTH };
+}
+
+// ===== スプライト（柔らかい円形のインク滴） =====
+const spriteCache = new Map();
+function getSplat(color) {
+  if (spriteCache.has(color)) return spriteCache.get(color);
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, color);
+  grad.addColorStop(0.55, color + 'aa');
+  grad.addColorStop(1, color + '00');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  spriteCache.set(color, c);
+  return c;
+}
+
+// ===== 紙テクスチャ =====
+function drawPaper() {
+  const w = paperCanvas.width = window.innerWidth;
+  const h = paperCanvas.height = window.innerHeight;
+  const g = paperCanvas.getContext('2d');
+  g.fillStyle = '#f3eee3';
+  g.fillRect(0, 0, w, h);
+  // 繊維っぽい粒状ノイズをタイルで生成
+  const tile = document.createElement('canvas');
+  tile.width = tile.height = 256;
+  const tg = tile.getContext('2d');
+  const img = tg.createImageData(256, 256);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = Math.random();
+    const dark = v < 0.5;
+    img.data[i] = dark ? 110 : 255;
+    img.data[i + 1] = dark ? 95 : 252;
+    img.data[i + 2] = dark ? 75 : 244;
+    img.data[i + 3] = Math.random() * 14;
+  }
+  tg.putImageData(img, 0, 0);
+  g.fillStyle = g.createPattern(tile, 'repeat');
+  g.fillRect(0, 0, w, h);
+  // 周辺を僅かに落とすビネット
+  const vg = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+  vg.addColorStop(0, 'rgba(120,100,75,0)');
+  vg.addColorStop(1, 'rgba(120,100,75,0.06)');
+  g.fillStyle = vg;
+  g.fillRect(0, 0, w, h);
+}
+
+// ===== キャンバスのリサイズ（描画内容を保持） =====
+function resizeInk() {
+  const newW = Math.max(2, Math.floor(window.innerWidth * INK_SCALE));
+  const newH = Math.max(2, Math.floor(window.innerHeight * INK_SCALE));
+  const old = document.createElement('canvas');
+  old.width = inkCanvas.width || 1;
+  old.height = inkCanvas.height || 1;
+  if (inkCanvas.width) old.getContext('2d').drawImage(inkCanvas, 0, 0);
+  inkCanvas.width = newW;
+  inkCanvas.height = newH;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, newW, newH);
+  if (old.width > 2) ctx.drawImage(old, 0, 0, newW, newH);
+}
+
+// ===== インク滴の生成 =====
+function randomBetween(a, b) { return a + Math.random() * (b - a); }
+function pickColor(cols) { return cols[Math.floor(Math.random() * cols.length)]; }
+
+function spawnDrop(x, y, cols, strength) {
+  const count = Math.round(4 + strength * 6);
+  for (let i = 0; i < count; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const off = Math.random() * 9 * strength;
+    particles.push({
+      x: x + Math.cos(ang) * off,
+      y: y + Math.sin(ang) * off,
+      age: 0,
+      life: randomBetween(4, 9),
+      r0: randomBetween(2, 5) * (0.6 + strength * 0.5),
+      r1: randomBetween(16, 40) * (0.6 + strength * 0.6),
+      alpha: randomBetween(0.013, 0.03),
+      mobility: randomBetween(0.6, 1.4),
+      sprite: getSplat(pickColor(cols)),
+    });
+  }
+  if (particles.length > MAX_PARTICLES) {
+    particles.splice(0, particles.length - MAX_PARTICLES);
+  }
+}
+
+// ===== 「李」の点群化と墨書き =====
+let glyphPoints = null;
+function getGlyphPoints() {
+  if (glyphPoints) return glyphPoints;
+  const size = 160;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000';
+  g.font = '140px "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(KANJI_CHAR, size / 2, size / 2 + 6);
+  const data = g.getImageData(0, 0, size, size).data;
+  const pts = [];
+  for (let y = 0; y < size; y += KANJI_SAMPLE_STEP) {
+    for (let x = 0; x < size; x += KANJI_SAMPLE_STEP) {
+      if (data[(y * size + x) * 4 + 3] > 128) {
+        pts.push({ x: (x - size / 2) / size, y: (y - size / 2) / size });
+      }
+    }
+  }
+  glyphPoints = pts;
+  return pts;
+}
+
+// 指を離した場所に「李」を墨で書く（点群に動きの鈍い粒子を置き、字形を保ったまま滲ませる）
+function spawnKanji(cx, cy, cols) {
+  const w = inkCanvas.width, h = inkCanvas.height;
+  const size = Math.max(60, Math.min(150, Math.min(w, h) * 0.38));
+  const x0 = Math.min(Math.max(cx, size * 0.55), w - size * 0.55);
+  const y0 = Math.min(Math.max(cy, size * 0.55), h - size * 0.55);
+  for (const pt of getGlyphPoints()) {
+    particles.push({
+      x: x0 + pt.x * size + (Math.random() - 0.5) * 2,
+      y: y0 + pt.y * size + (Math.random() - 0.5) * 2,
+      age: 0,
+      life: randomBetween(5, 10),
+      r0: randomBetween(2.5, 4.5),
+      r1: randomBetween(6, 12),
+      alpha: randomBetween(0.035, 0.07),
+      mobility: randomBetween(0.12, 0.35),
+      sprite: getSplat(pickColor(cols)),
+    });
+  }
+  if (particles.length > MAX_PARTICLES) {
+    particles.splice(0, particles.length - MAX_PARTICLES);
+  }
+}
+
+// ===== 自動演出（筆が独りでに泳ぐ） =====
+function makeStroke() {
+  const w = inkCanvas.width, h = inkCanvas.height;
+  const entry = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  return {
+    x: randomBetween(w * 0.1, w * 0.9),
+    y: randomBetween(h * 0.1, h * 0.9),
+    dir: Math.random() * Math.PI * 2,
+    speed: randomBetween(28, 70),
+    cols: entry.cols,
+    tLeft: randomBetween(4, 9),
+    seed: Math.random() * 100,
+    acc: 0,
+  };
+}
+
+function updateStrokes(dt) {
+  for (let i = strokes.length - 1; i >= 0; i--) {
+    const s = strokes[i];
+    s.tLeft -= dt;
+    // ノイズでゆっくり蛇行させる
+    s.dir += (noise2(s.seed, elapsedSec * 0.3) - 0.5) * 5 * dt;
+    const f = flowAt(s.x, s.y, elapsedSec * FLOW_TIME_SCALE);
+    s.x += (Math.cos(s.dir) * s.speed + f.vx * 0.4) * dt;
+    s.y += (Math.sin(s.dir) * s.speed + f.vy * 0.4) * dt;
+    s.acc += s.speed * dt;
+    if (s.acc >= DROP_SPACING_PX) {
+      s.acc = 0;
+      spawnDrop(s.x, s.y, s.cols, randomBetween(0.3, 0.6));
+    }
+    const out = s.x < -40 || s.x > inkCanvas.width + 40 || s.y < -40 || s.y > inkCanvas.height + 40;
+    if (s.tLeft <= 0 || out) strokes.splice(i, 1);
+  }
+}
+
+// ===== 粒子の更新・描画 =====
+function updateParticles(dt) {
+  const flowT = elapsedSec * FLOW_TIME_SCALE;
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.age += dt;
+    if (p.age >= p.life) { particles.splice(i, 1); continue; }
+    const f = flowAt(p.x, p.y, flowT);
+    // 字形を保つ粒子（mobility小）は流れにも揺らぎにも乗りにくい
+    p.x += (f.vx + (Math.random() - 0.5) * 44) * p.mobility * dt;
+    p.y += (f.vy + (Math.random() - 0.5) * 44) * p.mobility * dt;
+    const q = p.age / p.life;
+    const r = p.r0 + (p.r1 - p.r0) * Math.pow(q, 0.65);
+    ctx.globalAlpha = p.alpha * Math.pow(1 - q, 1.4);
+    ctx.drawImage(p.sprite, p.x - r, p.y - r, r * 2, r * 2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// 自分自身を僅かにぼかして描き直す＝水中での滲み
+function selfBlur(radius) {
+  ctx.filter = 'blur(' + radius + 'px)';
+  ctx.drawImage(inkCanvas, 0, 0);
+  ctx.filter = 'none';
+}
+
+// ===== メインループ =====
+function tick(ts) {
+  const dt = Math.min(0.05, (ts - lastTs) / 1000 || 0.016);
+  lastTs = ts;
+  elapsedSec += dt;
+  frameCount++;
+
+  if (washEndAt >= 0 && elapsedSec < washEndAt) {
+    // フレームレートに依存しないよう、退色量はdtに比例させる
+    ctx.fillStyle = 'rgba(255,255,255,' + Math.min(0.35, 8 * dt) + ')';
+    ctx.fillRect(0, 0, inkCanvas.width, inkCanvas.height);
+    selfBlur(1.4);
+  } else if (washEndAt >= 0) {
+    // 演出終了時に完全な白へ戻す（確実に洗い上がる）
+    washEndAt = -1;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, inkCanvas.width, inkCanvas.height);
+  } else {
+    if (frameCount % FADE_INTERVAL_FRAMES === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,' + FADE_ALPHA + ')';
+      ctx.fillRect(0, 0, inkCanvas.width, inkCanvas.height);
+    }
+    if (frameCount % BLUR_INTERVAL_FRAMES === 0) selfBlur(BLUR_RADIUS_PX);
+  }
+
+  if (isAutoOn && elapsedSec >= autoNextAt) {
+    strokes.push(makeStroke());
+    autoNextAt = elapsedSec + randomBetween(AUTO_WAIT_MIN_S, AUTO_WAIT_MAX_S);
+  }
+
+  updateStrokes(dt);
+  updateParticles(dt);
+  requestAnimationFrame(tick);
+}
+
+// ===== ポインタ操作 =====
+let isDrawing = false;
+let lastPx = 0, lastPy = 0, moveAcc = 0, movedTotal = 0;
+
+function toInkCoords(e) {
+  const r = inkCanvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) / r.width * inkCanvas.width,
+    y: (e.clientY - r.top) / r.height * inkCanvas.height,
+  };
+}
+
+inkCanvas.addEventListener('pointerdown', (e) => {
+  isDrawing = true;
+  movedTotal = 0;
+  moveAcc = 0;
+  const p = toInkCoords(e);
+  lastPx = p.x; lastPy = p.y;
+  try { inkCanvas.setPointerCapture(e.pointerId); } catch (_) { /* 合成イベントでは失敗してよい */ }
+});
+
+inkCanvas.addEventListener('pointermove', (e) => {
+  if (!isDrawing) return;
+  const p = toInkCoords(e);
+  const dx = p.x - lastPx, dy = p.y - lastPy;
+  const dist = Math.hypot(dx, dy);
+  movedTotal += dist;
+  // イベント間隔が粗くても途切れないよう、線分上を等間隔で補間して滴を落とす
+  const strength = Math.min(1.2, 0.4 + dist * 0.04);
+  moveAcc += dist;
+  let travelled = 0;
+  while (moveAcc >= DROP_SPACING_PX && dist > 0) {
+    moveAcc -= DROP_SPACING_PX;
+    travelled += DROP_SPACING_PX;
+    const t = Math.min(1, travelled / dist);
+    spawnDrop(lastPx + dx * t, lastPy + dy * t, PALETTE[selectedIndex].cols, strength);
+  }
+  lastPx = p.x; lastPy = p.y;
+});
+
+inkCanvas.addEventListener('pointerup', (e) => {
+  if (!isDrawing) return;
+  isDrawing = false;
+  // タップでもドラッグでも、指を離した場所に必ず「李」が書かれる
+  const p = toInkCoords(e);
+  spawnKanji(p.x, p.y, PALETTE[selectedIndex].cols);
+});
+
+// ===== UI 構築 =====
+const swatchesEl = document.getElementById('swatches');
+PALETTE.forEach((entry, i) => {
+  const btn = document.createElement('button');
+  btn.className = 'sw' + (i === selectedIndex ? ' active' : '');
+  btn.dataset.name = entry.name;
+  btn.title = entry.name;
+  btn.style.background = entry.cols.length > 1
+    ? 'conic-gradient(from -45deg, ' + entry.cols[0] + ' 0 50%, ' + entry.cols[1] + ' 50% 100%)'
+    : entry.cols[0];
+  btn.addEventListener('click', () => {
+    selectedIndex = i;
+    swatchesEl.querySelectorAll('.sw').forEach((b, j) => {
+      b.classList.toggle('active', j === i);
+    });
+  });
+  swatchesEl.appendChild(btn);
+});
+
+const autoBtn = document.getElementById('autoBtn');
+autoBtn.addEventListener('click', () => {
+  isAutoOn = !isAutoOn;
+  autoBtn.classList.toggle('on', isAutoOn);
+  if (isAutoOn) autoNextAt = elapsedSec + 0.5;
+});
+
+document.getElementById('washBtn').addEventListener('click', () => {
+  washEndAt = elapsedSec + WASH_DURATION_S;
+  particles = [];
+  strokes = [];
+});
+
+// ===== 初期化 =====
+window.addEventListener('resize', () => { resizeInk(); drawPaper(); });
+drawPaper();
+resizeInk();
+// 最初から少し模様が漂っているように
+strokes.push(makeStroke());
+strokes.push(makeStroke());
+requestAnimationFrame(tick);
+
+})();
+</script>
+</body>
+</html>
