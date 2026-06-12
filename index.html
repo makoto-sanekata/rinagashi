@@ -69,6 +69,19 @@
   .chip.purge { color: #8f3a34; letter-spacing: 3px; }
   .chip.purge:hover { color: #6e2a25; }
   .divider { width: 1px; height: 20px; background: rgba(70, 60, 45, 0.18); }
+  /* パージ後のフィナーレ写真 */
+  #finale {
+    position: fixed; left: 50%; top: 45%;
+    transform: translate(-50%, -50%) scale(0.94);
+    max-width: min(82vw, 540px); max-height: 62vh;
+    border-radius: 10px; box-shadow: 0 18px 60px rgba(40, 30, 20, 0.4);
+    opacity: 0; visibility: hidden; pointer-events: none; z-index: 8;
+    transition: opacity 1.2s ease, transform 1.2s ease, visibility 1.2s;
+  }
+  #finale.show {
+    opacity: 1; visibility: visible;
+    transform: translate(-50%, -50%) scale(1);
+  }
   .tbtn {
     border: none; background: none; padding: 4px 2px; cursor: pointer;
     font-family: inherit; font-size: 13px; letter-spacing: 4px;
@@ -104,6 +117,7 @@
 <canvas id="paper"></canvas>
 <canvas id="ink"></canvas>
 <canvas id="text"></canvas>
+<img id="finale" src="purge.jpg" alt="">
 
 <header>
   <h1>李流し</h1>
@@ -182,6 +196,9 @@ let strokes = [];
 let washEndAt = -1;
 let purgeStartAt = -1;
 let purgeEndAt = -1;
+let finaleShowAt = -1;
+let finaleHideAt = -1;
+const finaleEl = document.getElementById('finale');
 let frameCount = 0;
 let lastTs = 0;
 let elapsedSec = 0;
@@ -483,9 +500,21 @@ function tick(ts) {
         purgeStartAt = -1;
         purgeEndAt = -1;
         spawnPhrase(textCanvas.width / 2, textCanvas.height * 0.45, HEART_PHRASE, 3.5, 5.5, 0.55);
+        // ハートの後にフィナーレ写真をフェードイン
+        finaleShowAt = elapsedSec + 1.6;
+        finaleHideAt = finaleShowAt + 5.5;
       }
     }
     if (frameCount % TEXT_BLUR_INTERVAL_FRAMES === 0) selfBlur(textCanvas, tctx, TEXT_BLUR_RADIUS_PX);
+  }
+
+  if (finaleShowAt >= 0 && elapsedSec >= finaleShowAt) {
+    finaleEl.classList.add('show');
+    finaleShowAt = -1;
+  }
+  if (finaleHideAt >= 0 && elapsedSec >= finaleHideAt) {
+    finaleEl.classList.remove('show');
+    finaleHideAt = -1;
   }
 
   if (isAutoOn && elapsedSec >= autoNextAt) {
@@ -592,6 +621,9 @@ document.getElementById('washBtn').addEventListener('click', () => {
   particles = [];
   textParticles = [];
   strokes = [];
+  finaleEl.classList.remove('show');
+  finaleShowAt = -1;
+  finaleHideAt = -1;
 });
 
 // ===== 初期化 =====
