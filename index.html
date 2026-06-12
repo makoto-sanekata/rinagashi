@@ -160,13 +160,14 @@ const GLYPH_SAMPLE_STEP = 4;        // グリフを点群化する間引き幅
 
 // 選ぶ名前（label）と、タップで書かれるメッセージ（text）、その墨色
 const PHRASES = [
-  { label: '紘代', text: '結論からしゃべれ', color: '#bc4540' },
-  { label: '祐子', text: 'コネんな', color: '#2e4e86' },
-  { label: 'めぐ', text: 'ありさに聞け', color: '#41785c' },
-  { label: '誠', text: 'クビです', color: '#6b4a7e' },
+  { label: '紘代', text: 'だまっとけ！', color: '#bc4540' },
+  { label: '祐子', text: '話しきけ！', color: '#2e4e86' },
+  { label: 'めぐ', text: 'ありさに聞け！', color: '#41785c' },
+  { label: 'まこと', text: 'おもんないねん！', color: '#6b4a7e' },
+  { label: '啓', text: '順調です♡', color: '#c2587e' },
 ];
 // 最後に押す言葉。押すと画面の文字が崩れ落ちる
-const PURGE_PHRASE = { label: 'パージや', text: 'パージや', color: '#2a2833' };
+const PURGE_PHRASE = { label: 'パージや', text: 'お前らパージや！！！', color: '#2a2833' };
 const PURGE_DELAY_S = 1.0;          // 「パージや」を読ませてから崩すまでの間
 const PURGE_DURATION_S = 2.4;       // 崩れ落ち演出の長さ
 const PURGE_GRAVITY = 700;          // 崩れ落ちる粒子の重力
@@ -498,9 +499,6 @@ function tick(ts) {
       } else {
         purgeStartAt = -1;
         purgeEndAt = -1;
-        // 崩れ落ちた後、フィナーレ写真が徐々に大きくなりながら現れる
-        finaleShowAt = elapsedSec + 0.4;
-        finaleHideAt = finaleShowAt + 7;
       }
     }
     if (frameCount % TEXT_BLUR_INTERVAL_FRAMES === 0) selfBlur(textCanvas, tctx, TEXT_BLUR_RADIUS_PX);
@@ -604,6 +602,9 @@ purgeBtn.addEventListener('click', () => {
   spawnPhrase(textCanvas.width / 2, textCanvas.height * 0.45, PURGE_PHRASE, 2.8, 4.2);
   purgeStartAt = elapsedSec + PURGE_DELAY_S;
   purgeEndAt = purgeStartAt + PURGE_DURATION_S;
+  // 崩れ落ちの最中から、フィナーレ写真が徐々に大きくなりながら現れる
+  finaleShowAt = purgeStartAt + 1.0;
+  finaleHideAt = finaleShowAt + 8;
 });
 phrasesEl.appendChild(purgeBtn);
 
