@@ -13,10 +13,11 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); }
   body { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; }
 
-  #paper, #ink {
+  #paper, #ink, #text {
     position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
   }
   #ink { mix-blend-mode: multiply; touch-action: none; cursor: crosshair; }
+  #text { mix-blend-mode: multiply; pointer-events: none; }
 
   /* ===== タイトル ===== */
   header {
@@ -36,28 +37,30 @@
   /* ===== ツールバー ===== */
   #toolbar {
     position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
-    z-index: 10; display: flex; align-items: center; gap: 16px;
-    padding: 11px 24px; border-radius: 999px;
+    z-index: 10; display: flex; align-items: center; justify-content: center;
+    flex-wrap: wrap; gap: 6px 14px;
+    max-width: min(92vw, 780px); box-sizing: border-box;
+    padding: 10px 22px; border-radius: 26px;
     background: rgba(250, 247, 240, 0.78);
     border: 1px solid rgba(70, 60, 45, 0.14);
     box-shadow: 0 8px 28px rgba(70, 60, 45, 0.10);
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   }
-  .sw {
-    position: relative; width: 22px; height: 22px; border-radius: 50%;
-    border: none; padding: 0; cursor: pointer; flex: none;
-    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);
-    transition: transform .15s ease;
+  #phrases {
+    display: flex; align-items: center; justify-content: center;
+    flex-wrap: wrap; gap: 2px 12px;
   }
-  .sw:hover { transform: scale(1.12); }
-  .sw.active {
-    box-shadow: 0 0 0 2.5px var(--paper), 0 0 0 4px rgba(110, 100, 85, 0.65);
+  .chip {
+    border: none; background: none; padding: 4px 4px 2px; cursor: pointer;
+    font-family: inherit; font-size: 13px; letter-spacing: 2px;
+    color: var(--ink-sub); white-space: nowrap; touch-action: manipulation;
+    border-bottom: 1px solid transparent;
+    transition: color .15s ease, border-color .15s ease;
   }
-  .sw.active::after {
-    content: attr(data-name);
-    position: absolute; top: -27px; left: 50%; transform: translateX(-50%);
-    font-size: 11px; letter-spacing: 3px; color: var(--ink-sub);
-    font-family: inherit; white-space: nowrap;
+  .chip:hover { color: var(--ink-text); }
+  .chip.active {
+    color: var(--ink-text);
+    border-bottom-color: rgba(70, 60, 45, 0.55);
   }
   .divider { width: 1px; height: 20px; background: rgba(70, 60, 45, 0.18); }
   .tbtn {
@@ -80,12 +83,12 @@
     h1 { font-size: 22px; letter-spacing: 9px; }
     .subtitle { font-size: 8px; letter-spacing: 3px; }
     #toolbar {
-      gap: 10px; padding: 9px 14px;
+      gap: 4px 10px; padding: 8px 12px;
       bottom: calc(14px + env(safe-area-inset-bottom));
-      max-width: calc(100vw - 24px); box-sizing: border-box;
+      max-width: calc(100vw - 20px);
     }
-    #swatches { gap: 10px !important; }
-    .sw { width: 20px; height: 20px; }
+    #phrases { gap: 0 8px; }
+    .chip { font-size: 11px; letter-spacing: 1px; }
     .tbtn { font-size: 12px; letter-spacing: 1px; gap: 5px; }
   }
 </style>
@@ -94,6 +97,7 @@
 
 <canvas id="paper"></canvas>
 <canvas id="ink"></canvas>
+<canvas id="text"></canvas>
 
 <header>
   <h1>李流し</h1>
@@ -101,8 +105,8 @@
 </header>
 
 <div id="toolbar">
-  <!-- 色見本はJSで生成 -->
-  <div id="swatches" style="display:flex; align-items:center; gap:13px;"></div>
+  <!-- 言葉はJSで生成 -->
+  <div id="phrases"></div>
   <div class="divider"></div>
   <button id="autoBtn" class="tbtn on"><span class="dot"></span>自動演出</button>
   <button id="washBtn" class="tbtn">洗い流す</button>
@@ -114,11 +118,15 @@
 
 // ===== 調整用定数 =====
 const INK_SCALE = 0.6;              // 内部解像度（CSS pxに対する比率）
-const MAX_PARTICLES = 2600;
-const FADE_INTERVAL_FRAMES = 60;    // 退色を適用する間隔
-const FADE_ALPHA = 0.02;            // 1回の退色量（〜2.5分で消える）
-const BLUR_INTERVAL_FRAMES = 4;     // 滲み拡散の間隔
+const MAX_PARTICLES = 2600;         // 模様（インク）の粒子上限
+const MAX_TEXT_PARTICLES = 2600;    // 文字の粒子上限
+const FADE_INTERVAL_FRAMES = 60;    // 模様の退色を適用する間隔
+const FADE_ALPHA = 0.02;            // 模様の1回の退色量（〜2.5分で消える）
+const BLUR_INTERVAL_FRAMES = 4;     // 模様の滲み拡散の間隔
 const BLUR_RADIUS_PX = 0.8;
+const TEXT_FADE_PER_SEC = 1.4;      // 文字レイヤーの退色速度（1秒あたりの減衰率）
+const TEXT_BLUR_INTERVAL_FRAMES = 5;
+const TEXT_BLUR_RADIUS_PX = 0.8;
 const FLOW_STRENGTH = 5200;         // 流れ場の強さ
 const FLOW_TIME_SCALE = 0.03;       // 流れ場の時間変化速度
 const FLOW_NOISE_SCALE = 0.0045;    // 流れ場の空間スケール
@@ -126,26 +134,39 @@ const WASH_DURATION_S = 1.3;        // 「洗い流す」の所要時間
 const AUTO_WAIT_MIN_S = 4;
 const AUTO_WAIT_MAX_S = 9;
 const DROP_SPACING_PX = 4;          // ストローク中に滴を落とす間隔
-const KANJI_CHAR = '李';            // 操作のたびに書かれる文字
-const KANJI_SAMPLE_STEP = 4;        // グリフを点群化する間引き幅
+const GLYPH_FONT_PX = 100;          // 言葉を点群化するときのフォントサイズ
+const GLYPH_SAMPLE_STEP = 4;        // グリフを点群化する間引き幅
 
-const PALETTE = [
-  { name: '朱墨', cols: ['#a8403a', '#262430'] },
-  { name: '墨',   cols: ['#2a2833'] },
-  { name: '藍',   cols: ['#2e4e86'] },
-  { name: '朱',   cols: ['#bc4540'] },
-  { name: '緑',   cols: ['#41785c'] },
+// タップで書かれる言葉と、その墨色
+const PHRASES = [
+  { label: 'パージや', color: '#bc4540' },
+  { label: 'Go', color: '#2a2833' },
+  { label: '歩く道がRunway', color: '#2e4e86' },
+  { label: '統合失調', color: '#41785c' },
+  { label: '秘書求む', color: '#6b4a7e' },
+];
+
+// 自動演出が使う墨色（旧パレット）
+const INK_COLORS = [
+  ['#a8403a', '#262430'],
+  ['#2a2833'],
+  ['#2e4e86'],
+  ['#bc4540'],
+  ['#41785c'],
 ];
 
 // ===== 要素 =====
 const inkCanvas = document.getElementById('ink');
+const textCanvas = document.getElementById('text');
 const paperCanvas = document.getElementById('paper');
 const ctx = inkCanvas.getContext('2d');
+const tctx = textCanvas.getContext('2d');
 
 // ===== 状態 =====
-let selectedIndex = 3;   // 初期は「朱」
+let selectedIndex = 0;
 let isAutoOn = true;
-let particles = [];
+let particles = [];      // 模様の粒子（インクレイヤー）
+let textParticles = [];  // 文字の粒子（文字レイヤー）
 let strokes = [];
 let washEndAt = -1;
 let frameCount = 0;
@@ -226,7 +247,7 @@ function drawPaper() {
   g.fillRect(0, 0, w, h);
 }
 
-// ===== キャンバスのリサイズ（描画内容を保持） =====
+// ===== キャンバスのリサイズ（模様は保持・文字は儚いので白紙に戻す） =====
 function resizeInk() {
   const newW = Math.max(2, Math.floor(window.innerWidth * INK_SCALE));
   const newH = Math.max(2, Math.floor(window.innerHeight * INK_SCALE));
@@ -239,11 +260,16 @@ function resizeInk() {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, newW, newH);
   if (old.width > 2) ctx.drawImage(old, 0, 0, newW, newH);
+  textCanvas.width = newW;
+  textCanvas.height = newH;
+  tctx.fillStyle = '#ffffff';
+  tctx.fillRect(0, 0, newW, newH);
 }
 
 // ===== インク滴の生成 =====
 function randomBetween(a, b) { return a + Math.random() * (b - a); }
 function pickColor(cols) { return cols[Math.floor(Math.random() * cols.length)]; }
+function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
 
 function spawnDrop(x, y, cols, strength) {
   const count = Math.round(4 + strength * 6);
@@ -267,66 +293,77 @@ function spawnDrop(x, y, cols, strength) {
   }
 }
 
-// ===== 「李」の点群化と墨書き =====
-let glyphPoints = null;
-function getGlyphPoints() {
-  if (glyphPoints) return glyphPoints;
-  const size = 160;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const g = c.getContext('2d');
+// ===== 言葉の点群化と墨書き =====
+const phrasePointsCache = new Map();
+function getPhrasePoints(text) {
+  if (phrasePointsCache.has(text)) return phrasePointsCache.get(text);
+  const font = GLYPH_FONT_PX + 'px "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif';
+  const mc = document.createElement('canvas');
+  let g = mc.getContext('2d');
+  g.font = font;
+  const tw = Math.ceil(g.measureText(text).width);
+  mc.width = tw + 40;
+  mc.height = Math.ceil(GLYPH_FONT_PX * 1.6);
+  g = mc.getContext('2d'); // サイズ変更でコンテキスト状態が初期化されるため再設定
+  g.font = font;
   g.fillStyle = '#000';
-  g.font = '140px "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.fillText(KANJI_CHAR, size / 2, size / 2 + 6);
-  const data = g.getImageData(0, 0, size, size).data;
+  g.fillText(text, mc.width / 2, mc.height / 2);
+  const data = g.getImageData(0, 0, mc.width, mc.height).data;
   const pts = [];
-  for (let y = 0; y < size; y += KANJI_SAMPLE_STEP) {
-    for (let x = 0; x < size; x += KANJI_SAMPLE_STEP) {
-      if (data[(y * size + x) * 4 + 3] > 128) {
-        pts.push({ x: (x - size / 2) / size, y: (y - size / 2) / size });
+  for (let y = 0; y < mc.height; y += GLYPH_SAMPLE_STEP) {
+    for (let x = 0; x < mc.width; x += GLYPH_SAMPLE_STEP) {
+      if (data[(y * mc.width + x) * 4 + 3] > 128) {
+        pts.push({ x: x - mc.width / 2, y: y - mc.height / 2 });
       }
     }
   }
-  glyphPoints = pts;
-  return pts;
+  const entry = { pts, width: tw };
+  phrasePointsCache.set(text, entry);
+  return entry;
 }
 
-// 指を離した場所に「李」を墨で書く（点群に動きの鈍い粒子を置き、字形を保ったまま滲ませる）
-function spawnKanji(cx, cy, cols) {
-  const w = inkCanvas.width, h = inkCanvas.height;
-  const size = Math.max(60, Math.min(150, Math.min(w, h) * 0.38));
-  const x0 = Math.min(Math.max(cx, size * 0.55), w - size * 0.55);
-  const y0 = Math.min(Math.max(cy, size * 0.55), h - size * 0.55);
-  for (const pt of getGlyphPoints()) {
-    particles.push({
-      x: x0 + pt.x * size + (Math.random() - 0.5) * 2,
-      y: y0 + pt.y * size + (Math.random() - 0.5) * 2,
+// 指を離した場所に選択中の言葉を墨で書く（文字レイヤーに置くので数秒で溶けて消える）
+function spawnPhrase(cx, cy, phrase) {
+  const w = textCanvas.width, h = textCanvas.height;
+  const glyph = getPhrasePoints(phrase.label);
+  const maxW = w * 0.86;
+  const maxH = Math.min(h * 0.26, 110);
+  const scale = Math.min(maxH / GLYPH_FONT_PX, maxW / glyph.width);
+  const halfW = (glyph.width * scale) / 2 + 8;
+  const halfH = GLYPH_FONT_PX * scale * 0.8;
+  const x0 = clamp(cx, halfW, w - halfW);
+  const y0 = clamp(cy, halfH, h - halfH);
+  const rBase = Math.max(0.6, scale);
+  for (const pt of glyph.pts) {
+    textParticles.push({
+      x: x0 + pt.x * scale + (Math.random() - 0.5) * 2,
+      y: y0 + pt.y * scale + (Math.random() - 0.5) * 2,
       age: 0,
-      life: randomBetween(5, 10),
-      r0: randomBetween(2.5, 4.5),
-      r1: randomBetween(6, 12),
-      alpha: randomBetween(0.035, 0.07),
-      mobility: randomBetween(0.12, 0.35),
-      sprite: getSplat(pickColor(cols)),
+      life: randomBetween(1.8, 3.2),
+      r0: randomBetween(2, 3.5) * rBase,
+      r1: randomBetween(5, 9) * rBase,
+      alpha: randomBetween(0.06, 0.11),
+      mobility: randomBetween(0.1, 0.3),
+      sprite: getSplat(phrase.color),
     });
   }
-  if (particles.length > MAX_PARTICLES) {
-    particles.splice(0, particles.length - MAX_PARTICLES);
+  if (textParticles.length > MAX_TEXT_PARTICLES) {
+    textParticles.splice(0, textParticles.length - MAX_TEXT_PARTICLES);
   }
 }
 
 // ===== 自動演出（筆が独りでに泳ぐ） =====
 function makeStroke() {
   const w = inkCanvas.width, h = inkCanvas.height;
-  const entry = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const cols = INK_COLORS[Math.floor(Math.random() * INK_COLORS.length)];
   return {
     x: randomBetween(w * 0.1, w * 0.9),
     y: randomBetween(h * 0.1, h * 0.9),
     dir: Math.random() * Math.PI * 2,
     speed: randomBetween(28, 70),
-    cols: entry.cols,
+    cols: cols,
     tLeft: randomBetween(4, 9),
     seed: Math.random() * 100,
     acc: 0,
@@ -352,30 +389,30 @@ function updateStrokes(dt) {
   }
 }
 
-// ===== 粒子の更新・描画 =====
-function updateParticles(dt) {
+// ===== 粒子の更新・描画（模様・文字共通） =====
+function updateParticleList(list, target, dt) {
   const flowT = elapsedSec * FLOW_TIME_SCALE;
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const p = list[i];
     p.age += dt;
-    if (p.age >= p.life) { particles.splice(i, 1); continue; }
+    if (p.age >= p.life) { list.splice(i, 1); continue; }
     const f = flowAt(p.x, p.y, flowT);
     // 字形を保つ粒子（mobility小）は流れにも揺らぎにも乗りにくい
     p.x += (f.vx + (Math.random() - 0.5) * 44) * p.mobility * dt;
     p.y += (f.vy + (Math.random() - 0.5) * 44) * p.mobility * dt;
     const q = p.age / p.life;
     const r = p.r0 + (p.r1 - p.r0) * Math.pow(q, 0.65);
-    ctx.globalAlpha = p.alpha * Math.pow(1 - q, 1.4);
-    ctx.drawImage(p.sprite, p.x - r, p.y - r, r * 2, r * 2);
+    target.globalAlpha = p.alpha * Math.pow(1 - q, 1.4);
+    target.drawImage(p.sprite, p.x - r, p.y - r, r * 2, r * 2);
   }
-  ctx.globalAlpha = 1;
+  target.globalAlpha = 1;
 }
 
 // 自分自身を僅かにぼかして描き直す＝水中での滲み
-function selfBlur(radius) {
-  ctx.filter = 'blur(' + radius + 'px)';
-  ctx.drawImage(inkCanvas, 0, 0);
-  ctx.filter = 'none';
+function selfBlur(canvas, context, radius) {
+  context.filter = 'blur(' + radius + 'px)';
+  context.drawImage(canvas, 0, 0);
+  context.filter = 'none';
 }
 
 // ===== メインループ =====
@@ -387,20 +424,35 @@ function tick(ts) {
 
   if (washEndAt >= 0 && elapsedSec < washEndAt) {
     // フレームレートに依存しないよう、退色量はdtに比例させる
-    ctx.fillStyle = 'rgba(255,255,255,' + Math.min(0.35, 8 * dt) + ')';
+    const a = Math.min(0.35, 8 * dt);
+    ctx.fillStyle = 'rgba(255,255,255,' + a + ')';
     ctx.fillRect(0, 0, inkCanvas.width, inkCanvas.height);
-    selfBlur(1.4);
+    selfBlur(inkCanvas, ctx, 1.4);
+    tctx.fillStyle = 'rgba(255,255,255,' + a + ')';
+    tctx.fillRect(0, 0, textCanvas.width, textCanvas.height);
   } else if (washEndAt >= 0) {
     // 演出終了時に完全な白へ戻す（確実に洗い上がる）
     washEndAt = -1;
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, inkCanvas.width, inkCanvas.height);
+    tctx.fillStyle = '#ffffff';
+    tctx.fillRect(0, 0, textCanvas.width, textCanvas.height);
   } else {
+    // 模様レイヤー：ゆっくり退色・滲み
     if (frameCount % FADE_INTERVAL_FRAMES === 0) {
       ctx.fillStyle = 'rgba(255,255,255,' + FADE_ALPHA + ')';
       ctx.fillRect(0, 0, inkCanvas.width, inkCanvas.height);
     }
-    if (frameCount % BLUR_INTERVAL_FRAMES === 0) selfBlur(BLUR_RADIUS_PX);
+    if (frameCount % BLUR_INTERVAL_FRAMES === 0) selfBlur(inkCanvas, ctx, BLUR_RADIUS_PX);
+    // 文字レイヤー：時間比例で退色して数秒で溶ける（フレームレート非依存）
+    tctx.fillStyle = 'rgba(255,255,255,' + Math.min(0.3, TEXT_FADE_PER_SEC * dt) + ')';
+    tctx.fillRect(0, 0, textCanvas.width, textCanvas.height);
+    // 低アルファ退色は白に近づくと量子化で止まるため、定期的に強めに掃いて薄い染みを根絶する
+    if (frameCount % 120 === 0) {
+      tctx.fillStyle = 'rgba(255,255,255,0.1)';
+      tctx.fillRect(0, 0, textCanvas.width, textCanvas.height);
+    }
+    if (frameCount % TEXT_BLUR_INTERVAL_FRAMES === 0) selfBlur(textCanvas, tctx, TEXT_BLUR_RADIUS_PX);
   }
 
   if (isAutoOn && elapsedSec >= autoNextAt) {
@@ -409,7 +461,8 @@ function tick(ts) {
   }
 
   updateStrokes(dt);
-  updateParticles(dt);
+  updateParticleList(particles, ctx, dt);
+  updateParticleList(textParticles, tctx, dt);
   requestAnimationFrame(tick);
 }
 
@@ -448,7 +501,7 @@ inkCanvas.addEventListener('pointermove', (e) => {
     moveAcc -= DROP_SPACING_PX;
     travelled += DROP_SPACING_PX;
     const t = Math.min(1, travelled / dist);
-    spawnDrop(lastPx + dx * t, lastPy + dy * t, PALETTE[selectedIndex].cols, strength);
+    spawnDrop(lastPx + dx * t, lastPy + dy * t, [PHRASES[selectedIndex].color], strength);
   }
   lastPx = p.x; lastPy = p.y;
 });
@@ -456,28 +509,24 @@ inkCanvas.addEventListener('pointermove', (e) => {
 inkCanvas.addEventListener('pointerup', (e) => {
   if (!isDrawing) return;
   isDrawing = false;
-  // タップでもドラッグでも、指を離した場所に必ず「李」が書かれる
+  // タップでもドラッグでも、指を離した場所に選択中の言葉が書かれる
   const p = toInkCoords(e);
-  spawnKanji(p.x, p.y, PALETTE[selectedIndex].cols);
+  spawnPhrase(p.x, p.y, PHRASES[selectedIndex]);
 });
 
 // ===== UI 構築 =====
-const swatchesEl = document.getElementById('swatches');
-PALETTE.forEach((entry, i) => {
+const phrasesEl = document.getElementById('phrases');
+PHRASES.forEach((entry, i) => {
   const btn = document.createElement('button');
-  btn.className = 'sw' + (i === selectedIndex ? ' active' : '');
-  btn.dataset.name = entry.name;
-  btn.title = entry.name;
-  btn.style.background = entry.cols.length > 1
-    ? 'conic-gradient(from -45deg, ' + entry.cols[0] + ' 0 50%, ' + entry.cols[1] + ' 50% 100%)'
-    : entry.cols[0];
+  btn.className = 'chip' + (i === selectedIndex ? ' active' : '');
+  btn.textContent = entry.label;
   btn.addEventListener('click', () => {
     selectedIndex = i;
-    swatchesEl.querySelectorAll('.sw').forEach((b, j) => {
+    phrasesEl.querySelectorAll('.chip').forEach((b, j) => {
       b.classList.toggle('active', j === i);
     });
   });
-  swatchesEl.appendChild(btn);
+  phrasesEl.appendChild(btn);
 });
 
 const autoBtn = document.getElementById('autoBtn');
@@ -490,6 +539,7 @@ autoBtn.addEventListener('click', () => {
 document.getElementById('washBtn').addEventListener('click', () => {
   washEndAt = elapsedSec + WASH_DURATION_S;
   particles = [];
+  textParticles = [];
   strokes = [];
 });
 
