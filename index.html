@@ -69,14 +69,15 @@
   .chip.purge { color: #8f3a34; letter-spacing: 3px; }
   .chip.purge:hover { color: #6e2a25; }
   .divider { width: 1px; height: 20px; background: rgba(70, 60, 45, 0.18); }
-  /* パージ後のフィナーレ写真 */
+  /* パージ後のフィナーレ写真（じわじわ拡大しながら現れる） */
   #finale {
     position: fixed; left: 50%; top: 45%;
-    transform: translate(-50%, -50%) scale(0.94);
-    max-width: min(82vw, 540px); max-height: 62vh;
+    transform: translate(-50%, -50%) scale(0.4);
+    max-width: min(88vw, 640px); max-height: 70vh;
     border-radius: 10px; box-shadow: 0 18px 60px rgba(40, 30, 20, 0.4);
     opacity: 0; visibility: hidden; pointer-events: none; z-index: 8;
-    transition: opacity 1.2s ease, transform 1.2s ease, visibility 1.2s;
+    transition: opacity 1.2s ease, visibility 1.2s,
+                transform 8s cubic-bezier(0.2, 0.6, 0.3, 1);
   }
   #finale.show {
     opacity: 1; visibility: visible;
@@ -169,8 +170,6 @@ const PURGE_PHRASE = { label: 'パージや', text: 'パージや', color: '#2a2
 const PURGE_DELAY_S = 1.0;          // 「パージや」を読ませてから崩すまでの間
 const PURGE_DURATION_S = 2.4;       // 崩れ落ち演出の長さ
 const PURGE_GRAVITY = 700;          // 崩れ落ちる粒子の重力
-// 崩れ落ちた後、最後に咲く大きなハート
-const HEART_PHRASE = { label: '❤️', text: '❤️', color: '#bc4540' };
 
 // 自動演出が使う墨色（黒系は重いので淡色のみ）
 const INK_COLORS = [
@@ -499,10 +498,9 @@ function tick(ts) {
       } else {
         purgeStartAt = -1;
         purgeEndAt = -1;
-        spawnPhrase(textCanvas.width / 2, textCanvas.height * 0.45, HEART_PHRASE, 3.5, 5.5, 0.55);
-        // ハートの後にフィナーレ写真をフェードイン
-        finaleShowAt = elapsedSec + 1.6;
-        finaleHideAt = finaleShowAt + 5.5;
+        // 崩れ落ちた後、フィナーレ写真が徐々に大きくなりながら現れる
+        finaleShowAt = elapsedSec + 0.4;
+        finaleHideAt = finaleShowAt + 7;
       }
     }
     if (frameCount % TEXT_BLUR_INTERVAL_FRAMES === 0) selfBlur(textCanvas, tctx, TEXT_BLUR_RADIUS_PX);
